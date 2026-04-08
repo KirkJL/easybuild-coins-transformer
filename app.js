@@ -39,6 +39,10 @@ function getDirection() {
   return document.querySelector('input[name="direction"]:checked').value;
 }
 
+function normalise(str) {
+  return String(str || '').trim().toLowerCase();
+}
+
 // ==========================
 // UPLOAD
 // ==========================
@@ -63,11 +67,11 @@ async function handleFile(file) {
   if (!rawData.length) return;
 
   const headers = Object.keys(rawData[0]);
+
   el('detectedHeaders').textContent = headers.join(', ');
 
   renderPreview('originalPreview', rawData);
 
-  // 🔥 FIXED FIELD POPULATION
   populateRequiredFields(headers);
 }
 
@@ -94,13 +98,17 @@ function parseCSV(text) {
 function getAvailableTargetFields(headers, direction) {
   const map = mapping[direction];
 
-  // ✅ STEP 1: find valid SOURCE fields in CSV
-  const validSourceFields = Object.keys(map).filter(src =>
-    headers.includes(src)
-  );
+  const normalisedHeaders = headers.map(normalise);
 
-  // ✅ STEP 2: convert to TARGET fields
-  return validSourceFields.map(src => map[src]);
+  const fields = [];
+
+  for (const [src, dest] of Object.entries(map)) {
+    if (normalisedHeaders.includes(normalise(src))) {
+      fields.push(dest);
+    }
+  }
+
+  return fields;
 }
 
 function populateRequiredFields(headers) {
@@ -108,7 +116,6 @@ function populateRequiredFields(headers) {
   select.innerHTML = '';
 
   const direction = getDirection();
-
   const fields = getAvailableTargetFields(headers, direction);
 
   fields.forEach(field => {
@@ -125,7 +132,7 @@ function populateRequiredFields(headers) {
 }
 
 // ==========================
-// TRANSFORM
+// TRANSFORM (NORMALISED MATCHING)
 // ==========================
 function transformData(data, direction) {
   const map = mapping[direction];
@@ -134,7 +141,13 @@ function transformData(data, direction) {
     const out = {};
 
     for (const [src, dest] of Object.entries(map)) {
-      let val = row[src] || '';
+
+      // 🔥 NORMALISED KEY MATCH
+      const key = Object.keys(row).find(
+        k => normalise(k) === normalise(src)
+      );
+
+      let val = key ? row[key] : '';
 
       val = val.trim();
 
