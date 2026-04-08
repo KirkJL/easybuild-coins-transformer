@@ -1,0 +1,19 @@
+{
+  "required_fields": ["ContactFirstName", "ContactLastName", "EmailAddress"],
+  "unique_fields": ["EmailAddress"],
+  "field_rules": {
+    "EmailAddress": {
+      "type": "email",
+      "required": true
+    },
+    "PhoneNumber": {
+      "type": "phone",
+      "required": false,
+      "min_length": 10
+    },
+    "PlotID": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
