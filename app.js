@@ -1,57 +1,58 @@
 // =========================
-// STATE
+// INLINE CONFIG (NO FETCH)
 // =========================
-let mapping = null;
-let config = null;
+
+const mapping = {
+  easybuild_to_coins: {
+    "First Name": "ContactFirstName",
+    "Last Name": "ContactLastName",
+    "Email": "EmailAddress",
+    "Phone": "PhoneNumber",
+    "Plot": "PlotID"
+  },
+  coins_to_easybuild: {
+    "ContactFirstName": "First Name",
+    "ContactLastName": "Last Name",
+    "EmailAddress": "Email",
+    "PhoneNumber": "Phone",
+    "PlotID": "Plot"
+  }
+};
+
+const config = {
+  required_fields: ["ContactFirstName", "ContactLastName", "EmailAddress"],
+  unique_fields: ["EmailAddress"],
+  field_rules: {
+    EmailAddress: { type: "email", required: true },
+    PhoneNumber: { type: "phone", required: false, min_length: 10 },
+    PlotID: { type: "string", required: false }
+  }
+};
+
 let outputData = [];
-let isReady = false;
+
+console.log("APP LOADED");
 
 // =========================
-// INIT (BLOCKING READY STATE)
+// EVENTS
 // =========================
-async function init() {
-  try {
-    console.log("INIT START");
+document.getElementById('fileInput').addEventListener('change', () => {
+  console.log("FILE SELECTED");
+});
 
-    const mappingRes = await fetch('mapping.json');
-    const configRes = await fetch('config.json');
-
-    if (!mappingRes.ok || !configRes.ok) {
-      throw new Error("Failed to load JSON files");
-    }
-
-    mapping = await mappingRes.json();
-    config = await configRes.json();
-
-    isReady = true;
-
-    console.log("INIT COMPLETE", { mapping, config });
-
-  } catch (err) {
-    console.error("INIT FAILED:", err);
-    alert("App failed to load config files. Check console.");
-  }
-}
-
-init();
-
-// =========================
-// UI EVENTS
-// =========================
 document.getElementById('convertBtn').onclick = async () => {
-
-  if (!isReady) {
-    alert("App still loading. Try again in a second.");
-    return;
-  }
+  console.log("CONVERT CLICKED");
 
   const file = document.getElementById('fileInput').files[0];
+
   if (!file) {
-    alert("Upload a CSV file first.");
+    alert("Upload a file first");
     return;
   }
 
   const text = await file.text();
+
+  console.log("FILE LOADED");
 
   const rows = parseCSV(text);
 
@@ -75,16 +76,13 @@ document.getElementById('convertBtn').onclick = async () => {
   document.getElementById('downloadBtn').disabled = false;
 };
 
-// =========================
-// DOWNLOAD
-// =========================
 document.getElementById('downloadBtn').onclick = () => {
   const csv = toCSV(outputData);
   download(csv);
 };
 
 // =========================
-// CSV PARSER
+// CSV PARSE
 // =========================
 function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -114,13 +112,8 @@ function transform(data, direction) {
     Object.keys(map).forEach(src => {
       let val = (row[src] || '').trim();
 
-      if (map[src].includes('Email')) {
-        val = val.toLowerCase();
-      }
-
-      if (map[src].includes('Phone')) {
-        val = val.replace(/\s+/g, '');
-      }
+      if (map[src].includes('Email')) val = val.toLowerCase();
+      if (map[src].includes('Phone')) val = val.replace(/\s+/g, '');
 
       newRow[map[src]] = val;
     });
@@ -130,37 +123,28 @@ function transform(data, direction) {
 }
 
 // =========================
-// VALIDATION
+// VALIDATE
 // =========================
 function validate(data) {
   const errors = [];
   const seen = new Set();
 
   data.forEach((row, i) => {
-    const rowNum = i + 2;
+    const r = i + 2;
 
     config.required_fields.forEach(field => {
       if (!row[field]) {
-        errors.push({ row: rowNum, field, message: "Missing value" });
+        errors.push({ row: r, field, message: "Missing" });
       }
     });
 
     if (row.EmailAddress) {
-
       if (!/^[^@]+@[^@]+\.[^@]+$/.test(row.EmailAddress)) {
-        errors.push({
-          row: rowNum,
-          field: "EmailAddress",
-          message: "Invalid email"
-        });
+        errors.push({ row: r, field: "EmailAddress", message: "Invalid email" });
       }
 
       if (seen.has(row.EmailAddress)) {
-        errors.push({
-          row: rowNum,
-          field: "EmailAddress",
-          message: "Duplicate email"
-        });
+        errors.push({ row: r, field: "EmailAddress", message: "Duplicate" });
       }
 
       seen.add(row.EmailAddress);
@@ -171,14 +155,11 @@ function validate(data) {
 }
 
 // =========================
-// CSV GENERATOR
+// CSV BUILD
 // =========================
 function toCSV(rows) {
   const headers = Object.keys(rows[0]);
-
-  const lines = [
-    headers.join(',')
-  ];
+  const lines = [headers.join(',')];
 
   rows.forEach(row => {
     lines.push(headers.map(h => row[h]).join(','));
@@ -188,14 +169,12 @@ function toCSV(rows) {
 }
 
 // =========================
-// DOWNLOAD HELPER
+// DOWNLOAD
 // =========================
 function download(text) {
   const blob = new Blob([text], { type: 'text/csv' });
-
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'output.csv';
-
   a.click();
 }
