@@ -4,10 +4,9 @@
 let rawData = [];
 let transformedData = [];
 let validationResults = { errors: [], warnings: [] };
-let uploadedFile = null;
 
 // =========================
-// STATIC CONFIG (SAFE)
+// STATIC SAFE CONFIG
 // =========================
 const mapping = {
   easybuild_to_coins: {
@@ -37,6 +36,7 @@ const baseConfig = {
 const fileInput = document.getElementById("fileInput");
 const browseBtn = document.getElementById("browseBtn");
 const dropZone = document.getElementById("dropZone");
+
 const fileNameEl = document.getElementById("fileName");
 const detectedHeadersEl = document.getElementById("detectedHeaders");
 
@@ -44,6 +44,13 @@ const convertBtn = document.getElementById("convertBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const downloadErrorsBtn = document.getElementById("downloadErrorsBtn");
 const resetBtn = document.getElementById("resetBtn");
+
+const requiredFieldsSelect = document.getElementById("requiredFields");
+
+const emailRequiredToggle = document.getElementById("emailRequiredToggle");
+const phoneRequiredToggle = document.getElementById("phoneRequiredToggle");
+const uniqueEmailToggle = document.getElementById("uniqueEmailToggle");
+const requirePlotIdToggle = document.getElementById("requirePlotIdToggle");
 
 const originalPreview = document.getElementById("originalPreview");
 const transformedPreview = document.getElementById("transformedPreview");
@@ -54,7 +61,7 @@ const warningsList = document.getElementById("warningsList");
 const statusText = document.getElementById("statusText");
 
 // =========================
-// FILE HANDLING
+// FILE INPUT
 // =========================
 browseBtn.onclick = () => fileInput.click();
 
@@ -62,9 +69,7 @@ fileInput.addEventListener("change", () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
 });
 
-dropZone.addEventListener("dragover", e => {
-  e.preventDefault();
-});
+dropZone.addEventListener("dragover", e => e.preventDefault());
 
 dropZone.addEventListener("drop", e => {
   e.preventDefault();
@@ -72,22 +77,62 @@ dropZone.addEventListener("drop", e => {
   if (file) handleFile(file);
 });
 
+// =========================
+// HANDLE FILE
+// =========================
 async function handleFile(file) {
-  uploadedFile = file;
   fileNameEl.textContent = file.name;
 
   const text = await file.text();
   rawData = parseCSV(text);
 
   if (!rawData.length) {
-    statusText.textContent = "Empty or invalid CSV.";
+    statusText.textContent = "Invalid CSV.";
     return;
   }
 
   detectedHeadersEl.textContent = Object.keys(rawData[0]).join(", ");
 
   renderPreview(originalPreview, rawData);
+
+  populateRequiredFields();
+
   statusText.textContent = "File loaded.";
+}
+
+// =========================
+// POPULATE REQUIRED FIELDS
+// =========================
+function populateRequiredFields() {
+  requiredFieldsSelect.innerHTML = "";
+
+  const direction = getDirection();
+  const map = mapping[direction];
+
+  Object.values(map).forEach(field => {
+    const option = document.createElement("option");
+    option.value = field;
+    option.textContent = field;
+
+    if (baseConfig.required_fields.includes(field)) {
+      option.selected = true;
+    }
+
+    requiredFieldsSelect.appendChild(option);
+  });
+}
+
+// =========================
+// DIRECTION CHANGE
+// =========================
+document.querySelectorAll('input[name="direction"]').forEach(radio => {
+  radio.addEventListener("change", () => {
+    if (rawData.length) populateRequiredFields();
+  });
+});
+
+function getDirection() {
+  return document.querySelector('input[name="direction"]:checked').value;
 }
 
 // =========================
@@ -100,44 +145,50 @@ convertBtn.onclick = () => {
       return;
     }
 
-    const direction = document.querySelector('input[name="direction"]:checked').value;
+    const direction = getDirection();
 
     transformedData = transform(rawData, direction);
 
-    validationResults = validate(transformedData);
+    const config = buildValidationConfig();
+
+    validationResults = validate(transformedData, config);
 
     renderPreview(transformedPreview, transformedData);
     renderResults();
 
     downloadBtn.disabled = validationResults.errors.length > 0;
-    downloadErrorsBtn.disabled = validationResults.errors.length === 0 && validationResults.warnings.length === 0;
+    downloadErrorsBtn.disabled =
+      validationResults.errors.length === 0 &&
+      validationResults.warnings.length === 0;
 
     statusText.textContent = validationResults.errors.length
       ? "Errors found."
-      : "Conversion successful.";
+      : "Success.";
 
   } catch (err) {
     console.error(err);
-    alert("Conversion failed. Check console.");
+    alert("Conversion failed.");
   }
 };
-function populateRequiredFields() {
-  const select = document.getElementById("requiredFields");
-  select.innerHTML = "";
 
-  const direction = document.querySelector('input[name="direction"]:checked').value;
-  const map = mapping[direction];
+// =========================
+// BUILD VALIDATION CONFIG
+// =========================
+function buildValidationConfig() {
+  const selectedRequired = Array.from(requiredFieldsSelect.selectedOptions).map(o => o.value);
 
-  // We only care about TARGET fields (safe + controlled)
-  const mappedFields = Object.values(map);
+  const required = new Set(selectedRequired);
 
-  mappedFields.forEach(field => {
-    const option = document.createElement("option");
-    option.value = field;
-    option.textContent = field;
-    select.appendChild(option);
-  });
+  if (emailRequiredToggle.checked) required.add("EmailAddress");
+  if (phoneRequiredToggle.checked) required.add("PhoneNumber");
+  if (requirePlotIdToggle.checked) required.add("PlotID");
+
+  return {
+    required_fields: Array.from(required),
+    unique_email: uniqueEmailToggle.checked
+  };
 }
+
 // =========================
 // TRANSFORM
 // =========================
@@ -161,36 +212,37 @@ function transform(data, direction) {
 }
 
 // =========================
-// VALIDATION
+// VALIDATE
 // =========================
-function validate(data) {
+function validate(data, config) {
   const errors = [];
   const warnings = [];
   const seenEmails = new Set();
 
   data.forEach((row, i) => {
-    const rowNum = i + 2;
+    const r = i + 2;
 
-    baseConfig.required_fields.forEach(field => {
+    config.required_fields.forEach(field => {
       if (!row[field]) {
-        errors.push({ row: rowNum, field, message: "Missing value" });
+        errors.push({ row: r, field, message: "Missing value" });
       }
     });
 
     if (row.EmailAddress) {
       if (!/^[^@]+@[^@]+\.[^@]+$/.test(row.EmailAddress)) {
-        errors.push({ row: rowNum, field: "EmailAddress", message: "Invalid email" });
+        errors.push({ row: r, field: "EmailAddress", message: "Invalid email" });
       }
 
-      if (seenEmails.has(row.EmailAddress)) {
-        errors.push({ row: rowNum, field: "EmailAddress", message: "Duplicate email" });
+      if (config.unique_email) {
+        if (seenEmails.has(row.EmailAddress)) {
+          errors.push({ row: r, field: "EmailAddress", message: "Duplicate email" });
+        }
+        seenEmails.add(row.EmailAddress);
       }
-
-      seenEmails.add(row.EmailAddress);
     }
 
     if (row.PhoneNumber && row.PhoneNumber.length < 10) {
-      warnings.push({ row: rowNum, field: "PhoneNumber", message: "Phone too short" });
+      warnings.push({ row: r, field: "PhoneNumber", message: "Phone too short" });
     }
   });
 
@@ -198,7 +250,7 @@ function validate(data) {
 }
 
 // =========================
-// CSV PARSER (SAFE ENOUGH)
+// CSV PARSER
 // =========================
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
@@ -217,7 +269,7 @@ function parseCSV(text) {
 }
 
 // =========================
-// PREVIEW TABLE
+// PREVIEW
 // =========================
 function renderPreview(container, data) {
   if (!data.length) {
@@ -233,9 +285,7 @@ function renderPreview(container, data) {
 
   data.slice(0, 5).forEach(row => {
     html += "<tr>";
-    headers.forEach(h => {
-      html += `<td>${row[h] || ""}</td>`;
-    });
+    headers.forEach(h => html += `<td>${row[h] || ""}</td>`);
     html += "</tr>";
   });
 
@@ -300,7 +350,7 @@ resetBtn.onclick = () => {
 };
 
 // =========================
-// CSV BUILD + DOWNLOAD
+// CSV BUILD
 // =========================
 function toCSV(rows) {
   const headers = Object.keys(rows[0]);
@@ -319,4 +369,4 @@ function download(text, filename) {
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
-    }
+}
