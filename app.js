@@ -1,115 +1,101 @@
-// =========================
+// ==========================
 // STATE
-// =========================
+// ==========================
 let rawData = [];
 let transformedData = [];
+let mapping = {};
+let baseConfig = {};
 let validationResults = { errors: [], warnings: [] };
 
-// =========================
-// STATIC SAFE CONFIG
-// =========================
-const mapping = {
-  easybuild_to_coins: {
-    "First Name": "ContactFirstName",
-    "Last Name": "ContactLastName",
-    "Email": "EmailAddress",
-    "Phone": "PhoneNumber",
-    "Plot": "PlotID"
-  },
-  coins_to_easybuild: {
-    "ContactFirstName": "First Name",
-    "ContactLastName": "Last Name",
-    "EmailAddress": "Email",
-    "PhoneNumber": "Phone",
-    "PlotID": "Plot"
-  }
-};
+// ==========================
+// INIT
+// ==========================
+document.addEventListener("DOMContentLoaded", async () => {
+  mapping = await fetchJSON("mapping.json");
+  baseConfig = await fetchJSON("config.json");
 
-const baseConfig = {
-  required_fields: ["ContactFirstName", "ContactLastName", "EmailAddress"],
-  unique_fields: ["EmailAddress"]
-};
-
-// =========================
-// DOM
-// =========================
-const fileInput = document.getElementById("fileInput");
-const browseBtn = document.getElementById("browseBtn");
-const dropZone = document.getElementById("dropZone");
-
-const fileNameEl = document.getElementById("fileName");
-const detectedHeadersEl = document.getElementById("detectedHeaders");
-
-const convertBtn = document.getElementById("convertBtn");
-const downloadBtn = document.getElementById("downloadBtn");
-const downloadErrorsBtn = document.getElementById("downloadErrorsBtn");
-const resetBtn = document.getElementById("resetBtn");
-
-const requiredFieldsSelect = document.getElementById("requiredFields");
-
-const emailRequiredToggle = document.getElementById("emailRequiredToggle");
-const phoneRequiredToggle = document.getElementById("phoneRequiredToggle");
-const uniqueEmailToggle = document.getElementById("uniqueEmailToggle");
-const requirePlotIdToggle = document.getElementById("requirePlotIdToggle");
-
-const originalPreview = document.getElementById("originalPreview");
-const transformedPreview = document.getElementById("transformedPreview");
-
-const errorsList = document.getElementById("errorsList");
-const warningsList = document.getElementById("warningsList");
-
-const statusText = document.getElementById("statusText");
-
-// =========================
-// FILE INPUT
-// =========================
-browseBtn.onclick = () => fileInput.click();
-
-fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) handleFile(fileInput.files[0]);
+  setupUpload();
+  setupActions();
 });
 
-dropZone.addEventListener("dragover", e => e.preventDefault());
-
-dropZone.addEventListener("drop", e => {
-  e.preventDefault();
-  const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
-});
-
-// =========================
-// HANDLE FILE
-// =========================
-async function handleFile(file) {
-  fileNameEl.textContent = file.name;
-
-  const text = await file.text();
-  rawData = parseCSV(text);
-
-  if (!rawData.length) {
-    statusText.textContent = "Invalid CSV.";
-    return;
-  }
-
-  detectedHeadersEl.textContent = Object.keys(rawData[0]).join(", ");
-
-  renderPreview(originalPreview, rawData);
-
-  populateRequiredFields();
-
-  statusText.textContent = "File loaded.";
+// ==========================
+// FETCH JSON
+// ==========================
+async function fetchJSON(path) {
+  const res = await fetch(path);
+  return await res.json();
 }
 
-// =========================
-// POPULATE REQUIRED FIELDS
-// =========================
+// ==========================
+// UPLOAD
+// ==========================
+function setupUpload() {
+  const input = document.getElementById("fileInput");
+  const btn = document.getElementById("browseBtn");
+
+  btn.onclick = () => input.click();
+
+  input.addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+  });
+}
+
+function handleFile(file) {
+  document.getElementById("fileName").textContent = file.name;
+
+  const reader = new FileReader();
+
+  reader.onload = e => {
+    rawData = parseCSV(e.target.result);
+
+    if (!rawData.length) return;
+
+    document.getElementById("detectedHeaders").textContent =
+      Object.keys(rawData[0]).join(", ");
+
+    renderPreview("originalPreview", rawData);
+    populateRequiredFields();
+  };
+
+  reader.readAsText(file);
+}
+
+// ==========================
+// CSV PARSER
+// ==========================
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+
+  const headers = lines[0].split(",").map(h => h.trim());
+
+  return lines.slice(1).map(line => {
+    const values = line.split(",");
+    const obj = {};
+    headers.forEach((h, i) => {
+      obj[h] = (values[i] || "").trim();
+    });
+    return obj;
+  });
+}
+
+// ==========================
+// REQUIRED FIELDS POPULATION
+// ==========================
 function populateRequiredFields() {
-  requiredFieldsSelect.innerHTML = "";
+  const select = document.getElementById("requiredFields");
+  select.innerHTML = "";
 
   const direction = getDirection();
   const map = mapping[direction];
 
-  Object.values(map).forEach(field => {
+  const mappedFields = Object.values(map);
+  const headers = rawData.length ? Object.keys(rawData[0]) : [];
+
+  const availableFields = mappedFields.filter(f => headers.includes(f));
+
+  availableFields.forEach(field => {
     const option = document.createElement("option");
     option.value = field;
     option.textContent = field;
@@ -118,255 +104,246 @@ function populateRequiredFields() {
       option.selected = true;
     }
 
-    requiredFieldsSelect.appendChild(option);
+    select.appendChild(option);
   });
 }
 
-// =========================
-// DIRECTION CHANGE
-// =========================
-document.querySelectorAll('input[name="direction"]').forEach(radio => {
-  radio.addEventListener("change", () => {
-    if (rawData.length) populateRequiredFields();
-  });
-});
-
-function getDirection() {
-  return document.querySelector('input[name="direction"]:checked').value;
-}
-
-// =========================
-// CONVERT
-// =========================
-convertBtn.onclick = () => {
-  try {
-    if (!rawData.length) {
-      alert("Upload a CSV first.");
-      return;
-    }
-
-    const direction = getDirection();
-
-    transformedData = transform(rawData, direction);
-
-    const config = buildValidationConfig();
-
-    validationResults = validate(transformedData, config);
-
-    renderPreview(transformedPreview, transformedData);
-    renderResults();
-
-    downloadBtn.disabled = validationResults.errors.length > 0;
-    downloadErrorsBtn.disabled =
-      validationResults.errors.length === 0 &&
-      validationResults.warnings.length === 0;
-
-    statusText.textContent = validationResults.errors.length
-      ? "Errors found."
-      : "Success.";
-
-  } catch (err) {
-    console.error(err);
-    alert("Conversion failed.");
-  }
-};
-
-// =========================
-// BUILD VALIDATION CONFIG
-// =========================
-function buildValidationConfig() {
-  const selectedRequired = Array.from(requiredFieldsSelect.selectedOptions).map(o => o.value);
-
-  const required = new Set(selectedRequired);
-
-  if (emailRequiredToggle.checked) required.add("EmailAddress");
-  if (phoneRequiredToggle.checked) required.add("PhoneNumber");
-  if (requirePlotIdToggle.checked) required.add("PlotID");
-
-  return {
-    required_fields: Array.from(required),
-    unique_email: uniqueEmailToggle.checked
-  };
-}
-
-// =========================
+// ==========================
 // TRANSFORM
-// =========================
-function transform(data, direction) {
+// ==========================
+function transformData(data, direction) {
   const map = mapping[direction];
 
   return data.map(row => {
-    const newRow = {};
+    const out = {};
 
-    Object.keys(map).forEach(src => {
-      let val = (row[src] || "").trim();
+    for (const [src, dest] of Object.entries(map)) {
+      let val = row[src] || "";
 
-      if (map[src].includes("Email")) val = val.toLowerCase();
-      if (map[src].includes("Phone")) val = val.replace(/\s+/g, "");
+      // cleaning rules
+      val = val.trim();
 
-      newRow[map[src]] = val;
-    });
+      if (dest.toLowerCase().includes("email")) {
+        val = val.toLowerCase();
+      }
 
-    return newRow;
+      if (dest.toLowerCase().includes("phone")) {
+        val = val.replace(/\s+/g, "");
+      }
+
+      out[dest] = val;
+    }
+
+    return out;
   });
 }
 
-// =========================
-// VALIDATE
-// =========================
-function validate(data, config) {
+// ==========================
+// VALIDATION CONFIG
+// ==========================
+function buildUserConfig() {
+  const requiredFields = Array.from(
+    document.getElementById("requiredFields").selectedOptions
+  ).map(o => o.value);
+
+  return {
+    required_fields: requiredFields,
+    emailRequired: document.getElementById("emailRequiredToggle").checked,
+    phoneRequired: document.getElementById("phoneRequiredToggle").checked,
+    uniqueEmail: document.getElementById("uniqueEmailToggle").checked,
+    requirePlot: document.getElementById("requirePlotIdToggle").checked
+  };
+}
+
+// ==========================
+// VALIDATION
+// ==========================
+function validateData(data, config) {
   const errors = [];
   const warnings = [];
+
   const seenEmails = new Set();
 
-  data.forEach((row, i) => {
-    const r = i + 2;
+  data.forEach((row, index) => {
+    const rowNum = index + 1;
 
+    // required fields
     config.required_fields.forEach(field => {
       if (!row[field]) {
-        errors.push({ row: r, field, message: "Missing value" });
+        errors.push({ row: rowNum, field, message: "Missing required field" });
       }
     });
 
-    if (row.EmailAddress) {
-      if (!/^[^@]+@[^@]+\.[^@]+$/.test(row.EmailAddress)) {
-        errors.push({ row: r, field: "EmailAddress", message: "Invalid email" });
+    // email
+    const email = row.EmailAddress;
+    if (email) {
+      if (!/^\S+@\S+\.\S+$/.test(email)) {
+        errors.push({ row: rowNum, field: "EmailAddress", message: "Invalid email" });
       }
 
-      if (config.unique_email) {
-        if (seenEmails.has(row.EmailAddress)) {
-          errors.push({ row: r, field: "EmailAddress", message: "Duplicate email" });
+      if (config.uniqueEmail) {
+        if (seenEmails.has(email)) {
+          errors.push({ row: rowNum, field: "EmailAddress", message: "Duplicate email" });
         }
-        seenEmails.add(row.EmailAddress);
+        seenEmails.add(email);
       }
+    } else if (config.emailRequired) {
+      errors.push({ row: rowNum, field: "EmailAddress", message: "Email required" });
     }
 
-    if (row.PhoneNumber && row.PhoneNumber.length < 10) {
-      warnings.push({ row: r, field: "PhoneNumber", message: "Phone too short" });
+    // phone
+    const phone = row.PhoneNumber;
+    if (phone) {
+      if (phone.length < 10) {
+        warnings.push({ row: rowNum, field: "PhoneNumber", message: "Short phone number" });
+      }
+    } else if (config.phoneRequired) {
+      errors.push({ row: rowNum, field: "PhoneNumber", message: "Phone required" });
+    }
+
+    // plot
+    if (config.requirePlot && !row.PlotID) {
+      errors.push({ row: rowNum, field: "PlotID", message: "Plot required" });
+    }
+
+    // empty row
+    if (Object.values(row).every(v => !v)) {
+      errors.push({ row: rowNum, field: "-", message: "Empty row" });
     }
   });
 
   return { errors, warnings };
 }
 
-// =========================
-// CSV PARSER
-// =========================
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
-  const headers = lines[0].split(",");
+// ==========================
+// ACTIONS
+// ==========================
+function setupActions() {
+  document.getElementById("convertBtn").onclick = () => {
+    if (!rawData.length) return;
 
-  return lines.slice(1).map(line => {
-    const values = line.split(",");
-    const obj = {};
+    const direction = getDirection();
 
-    headers.forEach((h, i) => {
-      obj[h.trim()] = (values[i] || "").trim();
+    transformedData = transformData(rawData, direction);
+
+    const userConfig = buildUserConfig();
+
+    validationResults = validateData(transformedData, userConfig);
+
+    renderPreview("transformedPreview", transformedData, validationResults);
+    renderResults(validationResults);
+
+    document.getElementById("downloadBtn").disabled = validationResults.errors.length > 0;
+    document.getElementById("downloadErrorsBtn").disabled =
+      validationResults.errors.length === 0 &&
+      validationResults.warnings.length === 0;
+  };
+
+  document.getElementById("downloadBtn").onclick = () => {
+    downloadCSV(transformedData, "output.csv");
+  };
+
+  document.getElementById("downloadErrorsBtn").onclick = () => {
+    downloadErrorReport(validationResults);
+  };
+
+  document.getElementById("resetBtn").onclick = () => location.reload();
+
+  document.querySelectorAll('input[name="direction"]').forEach(r => {
+    r.addEventListener("change", () => {
+      if (rawData.length) populateRequiredFields();
     });
-
-    return obj;
   });
 }
 
-// =========================
+// ==========================
+// HELPERS
+// ==========================
+function getDirection() {
+  return document.querySelector('input[name="direction"]:checked').value;
+}
+
+// ==========================
 // PREVIEW
-// =========================
-function renderPreview(container, data) {
+// ==========================
+function renderPreview(id, data, validation = null) {
+  const el = document.getElementById(id);
+
   if (!data.length) {
-    container.innerHTML = "No data.";
+    el.innerHTML = "No data";
     return;
   }
 
   const headers = Object.keys(data[0]);
 
   let html = "<table><thead><tr>";
-  headers.forEach(h => html += `<th>${h}</th>`);
+  headers.forEach(h => (html += `<th>${h}</th>`));
   html += "</tr></thead><tbody>";
 
-  data.slice(0, 5).forEach(row => {
-    html += "<tr>";
-    headers.forEach(h => html += `<td>${row[h] || ""}</td>`);
+  data.slice(0, 5).forEach((row, i) => {
+    const hasError =
+      validation &&
+      validation.errors.some(e => e.row === i + 1);
+
+    html += `<tr class="${hasError ? "error-row" : ""}">`;
+
+    headers.forEach(h => {
+      html += `<td>${row[h] || ""}</td>`;
+    });
+
     html += "</tr>";
   });
 
   html += "</tbody></table>";
-  container.innerHTML = html;
+  el.innerHTML = html;
 }
 
-// =========================
-// RESULTS UI
-// =========================
-function renderResults() {
-  errorsList.innerHTML = validationResults.errors.length
-    ? validationResults.errors.map(e => `<div>Row ${e.row} - ${e.field}: ${e.message}</div>`).join("")
-    : "No errors.";
+// ==========================
+// RESULTS
+// ==========================
+function renderResults(results) {
+  const errorsEl = document.getElementById("errorsList");
+  const warningsEl = document.getElementById("warningsList");
 
-  warningsList.innerHTML = validationResults.warnings.length
-    ? validationResults.warnings.map(w => `<div>Row ${w.row} - ${w.field}: ${w.message}</div>`).join("")
-    : "No warnings.";
+  errorsEl.innerHTML = results.errors.length
+    ? results.errors.map(e => `<p>Row ${e.row} [${e.field}] - ${e.message}</p>`).join("")
+    : "No errors";
+
+  warningsEl.innerHTML = results.warnings.length
+    ? results.warnings.map(w => `<p>Row ${w.row} [${w.field}] - ${w.message}</p>`).join("")
+    : "No warnings";
 }
 
-// =========================
+// ==========================
 // DOWNLOADS
-// =========================
-downloadBtn.onclick = () => {
-  const csv = toCSV(transformedData);
-  download(csv, "output.csv");
-};
+// ==========================
+function downloadCSV(data, filename) {
+  const headers = Object.keys(data[0]);
+  const rows = data.map(row =>
+    headers.map(h => `"${row[h] || ""}"`).join(",")
+  );
 
-downloadErrorsBtn.onclick = () => {
-  const rows = [
-    ["Row", "Field", "Type", "Message"],
-    ...validationResults.errors.map(e => [e.row, e.field, "Error", e.message]),
-    ...validationResults.warnings.map(w => [w.row, w.field, "Warning", w.message])
-  ];
+  const csv = [headers.join(","), ...rows].join("\n");
 
-  const csv = rows.map(r => r.join(",")).join("\n");
-  download(csv, "validation-report.csv");
-};
-
-// =========================
-// RESET
-// =========================
-resetBtn.onclick = () => {
-  rawData = [];
-  transformedData = [];
-  validationResults = { errors: [], warnings: [] };
-
-  fileInput.value = "";
-  fileNameEl.textContent = "No file selected";
-  detectedHeadersEl.textContent = "—";
-
-  originalPreview.innerHTML = "Upload a file.";
-  transformedPreview.innerHTML = "Convert a file.";
-
-  errorsList.innerHTML = "No errors.";
-  warningsList.innerHTML = "No warnings.";
-
-  downloadBtn.disabled = true;
-  downloadErrorsBtn.disabled = true;
-
-  statusText.textContent = "Reset complete.";
-};
-
-// =========================
-// CSV BUILD
-// =========================
-function toCSV(rows) {
-  const headers = Object.keys(rows[0]);
-  const lines = [headers.join(",")];
-
-  rows.forEach(row => {
-    lines.push(headers.map(h => row[h]).join(","));
-  });
-
-  return lines.join("\n");
-}
-
-function download(text, filename) {
-  const blob = new Blob([text], { type: "text/csv" });
+  const blob = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = filename;
+  a.click();
+}
+
+function downloadErrorReport(results) {
+  const rows = [
+    ["Row", "Field", "Type", "Message"],
+    ...results.errors.map(e => [e.row, e.field, "Error", e.message]),
+    ...results.warnings.map(w => [w.row, w.field, "Warning", w.message])
+  ];
+
+  const csv = rows.map(r => r.join(",")).join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `validation-report-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 }
