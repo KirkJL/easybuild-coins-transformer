@@ -121,7 +121,23 @@ convertBtn.onclick = () => {
     alert("Conversion failed. Check console.");
   }
 };
+function populateRequiredFields() {
+  const select = document.getElementById("requiredFields");
+  select.innerHTML = "";
 
+  const direction = document.querySelector('input[name="direction"]:checked').value;
+  const map = mapping[direction];
+
+  // We only care about TARGET fields (safe + controlled)
+  const mappedFields = Object.values(map);
+
+  mappedFields.forEach(field => {
+    const option = document.createElement("option");
+    option.value = field;
+    option.textContent = field;
+    select.appendChild(option);
+  });
+}
 // =========================
 // TRANSFORM
 // =========================
