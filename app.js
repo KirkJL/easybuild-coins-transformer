@@ -1,113 +1,113 @@
-let mapping = null;
-let config = null;
-let outputData = [];
+'use strict';
 
-async function init() {
-  mapping = await fetch('mapping.json').then(r => r.json());
-  config = await fetch('config.json').then(r => r.json());
-}
+(() => {
+  const state = {
+    mapping: null,
+    defaultConfig: null,
+    uploadedFile: null,
+    uploadedText: '',
+    originalRows: [],
+    transformedRows: [],
+    validationResults: { errors: [], warnings: [] },
+    outputCsv: '',
+    effectiveConfig: null,
+    direction: 'easybuild_to_coins'
+  };
 
-document.getElementById('convertBtn').onclick = async () => {
-  const file = document.getElementById('fileInput').files[0];
-  if (!file) return alert('Upload CSV');
+  const elements = {
+    dropZone: document.getElementById('dropZone'),
+    fileInput: document.getElementById('fileInput'),
+    browseBtn: document.getElementById('browseBtn'),
+    fileName: document.getElementById('fileName'),
+    detectedHeaders: document.getElementById('detectedHeaders'),
+    requiredFields: document.getElementById('requiredFields'),
+    emailRequiredToggle: document.getElementById('emailRequiredToggle'),
+    phoneRequiredToggle: document.getElementById('phoneRequiredToggle'),
+    uniqueEmailToggle: document.getElementById('uniqueEmailToggle'),
+    requirePlotIdToggle: document.getElementById('requirePlotIdToggle'),
+    convertBtn: document.getElementById('convertBtn'),
+    downloadBtn: document.getElementById('downloadBtn'),
+    downloadErrorsBtn: document.getElementById('downloadErrorsBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    exportConfigBtn: document.getElementById('exportConfigBtn'),
+    importConfigInput: document.getElementById('importConfigInput'),
+    originalPreview: document.getElementById('originalPreview'),
+    transformedPreview: document.getElementById('transformedPreview'),
+    errorsList: document.getElementById('errorsList'),
+    warningsList: document.getElementById('warningsList'),
+    statusText: document.getElementById('statusText'),
+    progressFill: document.getElementById('progressFill')
+  };
 
-  const text = await file.text();
-  const rows = parseCSV(text);
+  document.addEventListener('DOMContentLoaded', init);
 
-  const direction = document.getElementById('direction').value;
-  const transformed = transform(rows, direction);
+  async function init() {
+    bindEvents();
 
-  const validation = validate(transformed);
-
-  if (validation.errors.length) {
-    alert('Errors found. Fix before download.');
-    console.log(validation);
-    return;
+    try {
+      updateStatus('Loading mapping and validation defaults…', 5);
+      state.mapping = await loadJson('mapping.json');
+      state.defaultConfig = await loadConfig();
+      state.direction = getSelectedDirection();
+      syncValidationControlsFromDefaults();
+      populateRequiredFields();
+      updateStatus('Ready.', 0);
+    } catch (error) {
+      console.error(error);
+      updateStatus('Failed to load app configuration files. Check mapping.json and config.json.', 0);
+      elements.convertBtn.disabled = true;
+    }
   }
 
-  outputData = transformed;
-  document.getElementById('output').textContent = JSON.stringify(transformed.slice(0,5), null, 2);
-  document.getElementById('downloadBtn').disabled = false;
-};
+  function bindEvents() {
+    elements.browseBtn.addEventListener('click', () => elements.fileInput.click());
 
-document.getElementById('downloadBtn').onclick = () => {
-  const csv = toCSV(outputData);
-  download(csv);
-};
-
-function parseCSV(text) {
-  const [headerLine, ...lines] = text.split('\n');
-  const headers = headerLine.split(',');
-
-  return lines.map(line => {
-    const values = line.split(',');
-    const obj = {};
-    headers.forEach((h, i) => obj[h.trim()] = (values[i] || '').trim());
-    return obj;
-  });
-}
-
-function transform(data, direction) {
-  const map = mapping[direction];
-  return data.map(row => {
-    const newRow = {};
-    Object.keys(map).forEach(src => {
-      let val = (row[src] || '').trim();
-
-      if (map[src].includes('Email')) val = val.toLowerCase();
-      if (map[src].includes('Phone')) val = val.replace(/\s+/g, '');
-
-      newRow[map[src]] = val;
-    });
-    return newRow;
-  });
-}
-
-function validate(data) {
-  const errors = [];
-  const seen = new Set();
-
-  data.forEach((row, i) => {
-    const r = i + 2;
-
-    config.required_fields.forEach(field => {
-      if (!row[field]) {
-        errors.push({ row: r, field, message: 'Missing' });
+    elements.fileInput.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (file) {
+        await handleFile(file);
       }
     });
 
-    if (row.EmailAddress) {
-      if (!/^[^@]+@[^@]+\.[^@]+$/.test(row.EmailAddress)) {
-        errors.push({ row: r, field: 'EmailAddress', message: 'Invalid email' });
+    elements.dropZone.addEventListener('click', () => elements.fileInput.click());
+
+    elements.dropZone.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        elements.fileInput.click();
       }
+    });
 
-      if (seen.has(row.EmailAddress)) {
-        errors.push({ row: r, field: 'EmailAddress', message: 'Duplicate' });
+    ['dragenter', 'dragover'].forEach((eventName) => {
+      elements.dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        elements.dropZone.classList.add('is-dragover');
+      });
+    });
+
+    ['dragleave', 'dragend', 'drop'].forEach((eventName) => {
+      elements.dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        elements.dropZone.classList.remove('is-dragover');
+      });
+    });
+
+    elements.dropZone.addEventListener('drop', async (event) => {
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) {
+        await handleFile(file);
       }
-      seen.add(row.EmailAddress);
-    }
-  });
+    });
 
-  return { errors, warnings: [] };
-}
+    document.querySelectorAll('input[name="direction"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        state.direction = getSelectedDirection();
+        populateRequiredFields();
+        resetConversionArtifacts(false);
+        renderTransformedPreview([]);
+        renderResults({ errors: [], warnings: [] });
+        updateStatus('Direction changed. Ready.', 0);
+      });
+    });
 
-function toCSV(rows) {
-  const headers = Object.keys(rows[0]);
-  const lines = [headers.join(',')];
-
-  rows.forEach(row => {
-    lines.push(headers.map(h => row[h]).join(','));
-  });
-
-  return lines.join('\n');
-}
-
-function download(text) {
-  const blob = new Blob([text], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'output.csv';
-  a.click();
-}
-
-init();
+    elements.convertBtn.addEventListener('click', onConvert);
