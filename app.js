@@ -1,113 +1,201 @@
-'use strict';
+// =========================
+// STATE
+// =========================
+let mapping = null;
+let config = null;
+let outputData = [];
+let isReady = false;
 
-(() => {
-  const state = {
-    mapping: null,
-    defaultConfig: null,
-    uploadedFile: null,
-    uploadedText: '',
-    originalRows: [],
-    transformedRows: [],
-    validationResults: { errors: [], warnings: [] },
-    outputCsv: '',
-    effectiveConfig: null,
-    direction: 'easybuild_to_coins'
-  };
+// =========================
+// INIT (BLOCKING READY STATE)
+// =========================
+async function init() {
+  try {
+    console.log("INIT START");
 
-  const elements = {
-    dropZone: document.getElementById('dropZone'),
-    fileInput: document.getElementById('fileInput'),
-    browseBtn: document.getElementById('browseBtn'),
-    fileName: document.getElementById('fileName'),
-    detectedHeaders: document.getElementById('detectedHeaders'),
-    requiredFields: document.getElementById('requiredFields'),
-    emailRequiredToggle: document.getElementById('emailRequiredToggle'),
-    phoneRequiredToggle: document.getElementById('phoneRequiredToggle'),
-    uniqueEmailToggle: document.getElementById('uniqueEmailToggle'),
-    requirePlotIdToggle: document.getElementById('requirePlotIdToggle'),
-    convertBtn: document.getElementById('convertBtn'),
-    downloadBtn: document.getElementById('downloadBtn'),
-    downloadErrorsBtn: document.getElementById('downloadErrorsBtn'),
-    resetBtn: document.getElementById('resetBtn'),
-    exportConfigBtn: document.getElementById('exportConfigBtn'),
-    importConfigInput: document.getElementById('importConfigInput'),
-    originalPreview: document.getElementById('originalPreview'),
-    transformedPreview: document.getElementById('transformedPreview'),
-    errorsList: document.getElementById('errorsList'),
-    warningsList: document.getElementById('warningsList'),
-    statusText: document.getElementById('statusText'),
-    progressFill: document.getElementById('progressFill')
-  };
+    const mappingRes = await fetch('mapping.json');
+    const configRes = await fetch('config.json');
 
-  document.addEventListener('DOMContentLoaded', init);
-
-  async function init() {
-    bindEvents();
-
-    try {
-      updateStatus('Loading mapping and validation defaults…', 5);
-      state.mapping = await loadJson('mapping.json');
-      state.defaultConfig = await loadConfig();
-      state.direction = getSelectedDirection();
-      syncValidationControlsFromDefaults();
-      populateRequiredFields();
-      updateStatus('Ready.', 0);
-    } catch (error) {
-      console.error(error);
-      updateStatus('Failed to load app configuration files. Check mapping.json and config.json.', 0);
-      elements.convertBtn.disabled = true;
+    if (!mappingRes.ok || !configRes.ok) {
+      throw new Error("Failed to load JSON files");
     }
+
+    mapping = await mappingRes.json();
+    config = await configRes.json();
+
+    isReady = true;
+
+    console.log("INIT COMPLETE", { mapping, config });
+
+  } catch (err) {
+    console.error("INIT FAILED:", err);
+    alert("App failed to load config files. Check console.");
+  }
+}
+
+init();
+
+// =========================
+// UI EVENTS
+// =========================
+document.getElementById('convertBtn').onclick = async () => {
+
+  if (!isReady) {
+    alert("App still loading. Try again in a second.");
+    return;
   }
 
-  function bindEvents() {
-    elements.browseBtn.addEventListener('click', () => elements.fileInput.click());
+  const file = document.getElementById('fileInput').files[0];
+  if (!file) {
+    alert("Upload a CSV file first.");
+    return;
+  }
 
-    elements.fileInput.addEventListener('change', async (event) => {
-      const file = event.target.files && event.target.files[0];
-      if (file) {
-        await handleFile(file);
+  const text = await file.text();
+
+  const rows = parseCSV(text);
+
+  const direction = document.getElementById('direction').value;
+
+  const transformed = transform(rows, direction);
+
+  const validation = validate(transformed);
+
+  if (validation.errors.length) {
+    console.error(validation.errors);
+    alert("Validation errors found. Check console.");
+    return;
+  }
+
+  outputData = transformed;
+
+  document.getElementById('output').textContent =
+    JSON.stringify(transformed.slice(0, 5), null, 2);
+
+  document.getElementById('downloadBtn').disabled = false;
+};
+
+// =========================
+// DOWNLOAD
+// =========================
+document.getElementById('downloadBtn').onclick = () => {
+  const csv = toCSV(outputData);
+  download(csv);
+};
+
+// =========================
+// CSV PARSER
+// =========================
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',');
+
+  return lines.slice(1).map(line => {
+    const values = line.split(',');
+    const obj = {};
+
+    headers.forEach((h, i) => {
+      obj[h.trim()] = (values[i] || '').trim();
+    });
+
+    return obj;
+  });
+}
+
+// =========================
+// TRANSFORM
+// =========================
+function transform(data, direction) {
+  const map = mapping[direction];
+
+  return data.map(row => {
+    const newRow = {};
+
+    Object.keys(map).forEach(src => {
+      let val = (row[src] || '').trim();
+
+      if (map[src].includes('Email')) {
+        val = val.toLowerCase();
+      }
+
+      if (map[src].includes('Phone')) {
+        val = val.replace(/\s+/g, '');
+      }
+
+      newRow[map[src]] = val;
+    });
+
+    return newRow;
+  });
+}
+
+// =========================
+// VALIDATION
+// =========================
+function validate(data) {
+  const errors = [];
+  const seen = new Set();
+
+  data.forEach((row, i) => {
+    const rowNum = i + 2;
+
+    config.required_fields.forEach(field => {
+      if (!row[field]) {
+        errors.push({ row: rowNum, field, message: "Missing value" });
       }
     });
 
-    elements.dropZone.addEventListener('click', () => elements.fileInput.click());
+    if (row.EmailAddress) {
 
-    elements.dropZone.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        elements.fileInput.click();
+      if (!/^[^@]+@[^@]+\.[^@]+$/.test(row.EmailAddress)) {
+        errors.push({
+          row: rowNum,
+          field: "EmailAddress",
+          message: "Invalid email"
+        });
       }
-    });
 
-    ['dragenter', 'dragover'].forEach((eventName) => {
-      elements.dropZone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        elements.dropZone.classList.add('is-dragover');
-      });
-    });
-
-    ['dragleave', 'dragend', 'drop'].forEach((eventName) => {
-      elements.dropZone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        elements.dropZone.classList.remove('is-dragover');
-      });
-    });
-
-    elements.dropZone.addEventListener('drop', async (event) => {
-      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-      if (file) {
-        await handleFile(file);
+      if (seen.has(row.EmailAddress)) {
+        errors.push({
+          row: rowNum,
+          field: "EmailAddress",
+          message: "Duplicate email"
+        });
       }
-    });
 
-    document.querySelectorAll('input[name="direction"]').forEach((radio) => {
-      radio.addEventListener('change', () => {
-        state.direction = getSelectedDirection();
-        populateRequiredFields();
-        resetConversionArtifacts(false);
-        renderTransformedPreview([]);
-        renderResults({ errors: [], warnings: [] });
-        updateStatus('Direction changed. Ready.', 0);
-      });
-    });
+      seen.add(row.EmailAddress);
+    }
+  });
 
-    elements.convertBtn.addEventListener('click', onConvert);
+  return { errors, warnings: [] };
+}
+
+// =========================
+// CSV GENERATOR
+// =========================
+function toCSV(rows) {
+  const headers = Object.keys(rows[0]);
+
+  const lines = [
+    headers.join(',')
+  ];
+
+  rows.forEach(row => {
+    lines.push(headers.map(h => row[h]).join(','));
+  });
+
+  return lines.join('\n');
+}
+
+// =========================
+// DOWNLOAD HELPER
+// =========================
+function download(text) {
+  const blob = new Blob([text], { type: 'text/csv' });
+
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'output.csv';
+
+  a.click();
+}
