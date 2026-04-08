@@ -85,17 +85,47 @@ document.getElementById('downloadBtn').onclick = () => {
 // CSV PARSE
 // =========================
 function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',');
+  const rows = [];
+  let current = '';
+  let insideQuotes = false;
+  let row = [];
 
-  return lines.slice(1).map(line => {
-    const values = line.split(',');
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && insideQuotes && next === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if (char === ',' && !insideQuotes) {
+      row.push(current);
+      current = '';
+    } else if ((char === '\n' || char === '\r') && !insideQuotes) {
+      if (current || row.length) {
+        row.push(current);
+        rows.push(row);
+        row = [];
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current || row.length) {
+    row.push(current);
+    rows.push(row);
+  }
+
+  const headers = rows[0].map(h => h.trim());
+
+  return rows.slice(1).map(r => {
     const obj = {};
-
     headers.forEach((h, i) => {
-      obj[h.trim()] = (values[i] || '').trim();
+      obj[h] = (r[i] || '').trim();
     });
-
     return obj;
   });
 }
