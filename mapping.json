@@ -1,0 +1,16 @@
+{
+  "easybuild_to_coins": {
+    "First Name": "ContactFirstName",
+    "Last Name": "ContactLastName",
+    "Email": "EmailAddress",
+    "Phone": "PhoneNumber",
+    "Plot": "PlotID"
+  },
+  "coins_to_easybuild": {
+    "ContactFirstName": "First Name",
+    "ContactLastName": "Last Name",
+    "EmailAddress": "Email",
+    "PhoneNumber": "Phone",
+    "PlotID": "Plot"
+  }
+}
