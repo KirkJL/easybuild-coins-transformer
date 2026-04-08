@@ -1,38 +1,176 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CSV TEST</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Client-side CSV transformer for EasyBuild and COINS formats.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests">
+  <title>EasyBuild ⇄ COINS CSV Transformer</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Client-side CSV transformer</p>
+        <h1>EasyBuild ⇄ COINS</h1>
+        <p class="subcopy">
+          Upload a CSV, validate it, convert it, and download the result. Nothing leaves your browser.
+        </p>
+      </div>
+    </header>
 
-<h2>CSV TEST APP</h2>
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>1) Upload CSV</h2>
+      </div>
 
-<input type="file" id="fileInput">
-<button onclick="run()">Convert</button>
+      <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="Upload CSV file">
+        <input id="fileInput" class="sr-only" type="file" accept=".csv,text/csv">
+        <div class="drop-zone-inner">
+          <div class="drop-icon" aria-hidden="true">⇪</div>
+          <p class="drop-title">Drag and drop your CSV here</p>
+          <p class="drop-subtitle">or use the button below</p>
+          <button id="browseBtn" class="btn btn-secondary" type="button">Choose file</button>
+        </div>
+      </div>
 
-<pre id="out"></pre>
+      <div class="upload-meta">
+        <div>
+          <span class="meta-label">File</span>
+          <strong id="fileName">No file selected</strong>
+        </div>
+        <div>
+          <span class="meta-label">Detected headers</span>
+          <strong id="detectedHeaders">—</strong>
+        </div>
+      </div>
+    </section>
 
-<script>
-console.log("SCRIPT RUNNING");
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>2) Conversion</h2>
+      </div>
 
-function run() {
-  console.log("BUTTON CLICKED");
+      <div class="direction-grid">
+        <label class="direction-card">
+          <input type="radio" name="direction" value="easybuild_to_coins" checked>
+          <span>EasyBuild → COINS</span>
+        </label>
 
-  const file = document.getElementById('fileInput').files[0];
+        <label class="direction-card">
+          <input type="radio" name="direction" value="coins_to_easybuild">
+          <span>COINS → EasyBuild</span>
+        </label>
+      </div>
+    </section>
 
-  if (!file) {
-    alert("NO FILE");
-    return;
-  }
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>3) Validation config</h2>
+        <p>Only mapped fields can be validated. No custom fields. No custom rule code.</p>
+      </div>
 
-  file.text().then(text => {
-    console.log("FILE READ OK");
+      <div class="config-grid">
+        <div class="config-block">
+          <label for="requiredFields"><strong>Required fields</strong></label>
+          <select id="requiredFields" multiple size="6" aria-describedby="requiredFieldsHelp"></select>
+          <p id="requiredFieldsHelp" class="help-text">
+            Multi-select only from mapped fields.
+          </p>
+        </div>
 
-    document.getElementById('out').textContent = text.slice(0, 200);
-  });
-}
-</script>
+        <div class="config-block toggles">
+          <label class="toggle">
+            <input id="emailRequiredToggle" type="checkbox">
+            <span>Email required</span>
+          </label>
 
+          <label class="toggle">
+            <input id="phoneRequiredToggle" type="checkbox">
+            <span>Phone required</span>
+          </label>
+
+          <label class="toggle">
+            <input id="uniqueEmailToggle" type="checkbox">
+            <span>Enforce unique Email</span>
+          </label>
+
+          <label class="toggle">
+            <input id="requirePlotIdToggle" type="checkbox">
+            <span>Require PlotID</span>
+          </label>
+        </div>
+
+        <div class="config-actions">
+          <button id="exportConfigBtn" class="btn btn-secondary" type="button">Export config</button>
+          <label class="btn btn-secondary file-label" for="importConfigInput">Import config</label>
+          <input id="importConfigInput" class="sr-only" type="file" accept=".json,application/json">
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>4) Convert</h2>
+      </div>
+
+      <div class="actions-row">
+        <button id="convertBtn" class="btn btn-primary" type="button">Convert</button>
+        <button id="downloadBtn" class="btn" type="button" disabled>Download output CSV</button>
+        <button id="downloadErrorsBtn" class="btn" type="button" disabled>Download error report</button>
+        <button id="resetBtn" class="btn btn-ghost" type="button">Reset</button>
+      </div>
+
+      <div class="status-wrap">
+        <div class="progress-bar" aria-hidden="true">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="statusText" class="status-text">Ready.</p>
+      </div>
+    </section>
+
+    <section class="panel preview-panel">
+      <div class="panel-heading">
+        <h2>Preview</h2>
+      </div>
+
+      <div class="preview-grid">
+        <div>
+          <h3>Original data (first 5 rows)</h3>
+          <div id="originalPreview" class="table-wrap empty-state">
+            Upload a file to preview the source data.
+          </div>
+        </div>
+
+        <div>
+          <h3>Transformed data (first 5 rows)</h3>
+          <div id="transformedPreview" class="table-wrap empty-state">
+            Convert a file to preview transformed output.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel results-panel">
+      <div class="panel-heading">
+        <h2>Validation results</h2>
+      </div>
+
+      <div class="results-grid">
+        <div>
+          <h3>Blocking errors</h3>
+          <div id="errorsList" class="result-list empty-state">No errors yet.</div>
+        </div>
+
+        <div>
+          <h3>Warnings</h3>
+          <div id="warningsList" class="result-list empty-state">No warnings yet.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
 </body>
 </html>
