@@ -1,0 +1,1 @@
+# easybuild-coins-transformer
